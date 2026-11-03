@@ -3,6 +3,7 @@ import os
 import time
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 from vnstock import Vnstock
 
@@ -45,31 +46,49 @@ def lay_danh_sach():
     return MA_DU_PHONG
 
 
-def phan_tich(ma):
-    start = (date.today() - timedelta(days=150)).strftime("%Y-%m-%d")
-    end = date.today().strftime("%Y-%m-%d")
-    df = Vnstock().stock(symbol=ma, source="VCI").quote.history(
-        start=start, end=end, interval="1D")
-    df = df.reset_index(drop=True)
-    if len(df) < 30:
-        return None
+def supertrend_up(df, period=10, mult=3.0):
+    """Trả về mảng True/False: True = xu hướng tăng (Supertrend)."""
+    h = df["high"].values.astype(float)
+    l = df["low"].values.astype(float)
+    c = df["close"].values.astype(float)
+    n = len(df)
 
+    tr = np.zeros(n)
+    tr[0] = h[0] - l[0]
+    for i in range(1, n):
+        tr[i] = max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
+    atr = pd.Series(tr).ewm(alpha=1.0 / period, adjust=False).mean().values
+
+    hl2 = (h + l) / 2.0
+    ub = hl2 + mult * atr
+    lb = hl2 - mult * atr
+    fub = ub.copy()
+    flb = lb.copy()
+    up = np.ones(n, dtype=bool)
+
+    for i in range(1, n):
+        fub[i] = ub[i] if (ub[i] < fub[i - 1] or c[i - 1] > fub[i - 1]) else fub[i - 1]
+        flb[i] = lb[i] if (lb[i] > flb[i - 1] or c[i - 1] < flb[i - 1]) else flb[i - 1]
+        if up[i - 1]:
+            up[i] = not (c[i] < flb[i])
+        else:
+            up[i] = c[i] > fub[i]
+    return up
+
+
+def tin_hieu(up, df):
+    """Từ chuỗi xu hướng tăng/giảm, suy ra tín hiệu MUA/GIU/BAN/OUT."""
     c = df["close"]
-    e9 = c.ewm(span=9, adjust=False).mean()
-    e21 = c.ewm(span=21, adjust=False).mean()
-    up = e9 > e21
-
     n = len(df)
     i = n - 1
-    while i > 0 and up.iloc[i] == up.iloc[i - 1]:
+    while i > 0 and up[i] == up[i - 1]:
         i -= 1  # lùi về phiên đầu tiên của trạng thái hiện tại
 
     phien = n - 1 - i
     ngay = pd.to_datetime(df["time"].iloc[i]).strftime("%d/%m/%Y")
     bao = float(c.iloc[i])
-    nay = float(c.iloc[-1])
 
-    if up.iloc[-1]:
+    if up[-1]:
         tin = "MUA" if phien == 0 else "GIU"
     else:
         tin = "BAN" if phien == 0 else "OUT"
@@ -77,8 +96,28 @@ def phan_tich(ma):
     if tin == "OUT":
         ngay, bao, phien = "-", 0, 0
 
-    return {"ma": ma, "tin": tin, "ngay": ngay, "phien": int(phien),
-            "bao": round(bao, 2), "nay": round(nay, 2)}
+    return {"tin": tin, "ngay": ngay, "phien": int(phien), "bao": round(bao, 2)}
+
+
+def phan_tich(ma):
+    start = (date.today() - timedelta(days=200)).strftime("%Y-%m-%d")
+    end = date.today().strftime("%Y-%m-%d")
+    df = Vnstock().stock(symbol=ma, source="VCI").quote.history(
+        start=start, end=end, interval="1D")
+    df = df.reset_index(drop=True)
+    if len(df) < 40:
+        return None
+
+    c = df["close"]
+    e9 = c.ewm(span=9, adjust=False).mean()
+    e21 = c.ewm(span=21, adjust=False).mean()
+    up_ema = (e9 > e21).values
+    up_st = supertrend_up(df, 10, 3.0)
+
+    return {"ma": ma,
+            "nay": round(float(c.iloc[-1]), 2),
+            "st": tin_hieu(up_st, df),
+            "ema": tin_hieu(up_ema, df)}
 
 
 MA_LIST = lay_danh_sach()
@@ -102,9 +141,6 @@ for stt, ma in enumerate(MA_LIST, 1):
     if stt % 100 == 0:
         print("Da xu ly", stt, "/", len(MA_LIST), "ma, co", len(ket_qua), "ket qua")
     time.sleep(1.1)  # giữ dưới 60 lượt/phút
-
-thu_tu = {"MUA": 0, "BAN": 1, "GIU": 2, "OUT": 3}
-ket_qua.sort(key=lambda d: (thu_tu[d["tin"]], d["phien"]))
 
 if ket_qua:
     with open("data.json", "w", encoding="utf-8") as f:
