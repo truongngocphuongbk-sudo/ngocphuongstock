@@ -24,6 +24,6 @@ jobs:
       - run: |
           git config user.name "bot"
           git config user.email "bot@users.noreply.github.com"
-          git add data.json
+          git add data.json bo_qua.json
           git commit -m "cap nhat" || echo "khong co thay doi"
           git push
