@@ -1,9 +1,18 @@
 import json
+import os
 import time
 from datetime import date, timedelta
 
 import pandas as pd
 from vnstock import Vnstock
+
+# Đăng nhập bằng khóa API (lấy từ GitHub Secret)
+try:
+    import vnstock
+    if os.environ.get("VNSTOCK_API_KEY"):
+        vnstock.login(os.environ["VNSTOCK_API_KEY"])
+except Exception as e:
+    print("Khong dang nhap duoc:", e)
 
 # Danh sách mã muốn theo dõi (sửa tùy ý)
 MA_LIST = ["NTP", "PXL", "TV1", "DHA", "PCH", "VNM", "VCB",
