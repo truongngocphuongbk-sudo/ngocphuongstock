@@ -1,6 +1,9 @@
+import bisect
 import json
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 import numpy as np
@@ -18,6 +21,48 @@ except Exception as e:
 # Danh sách dự phòng, chỉ dùng khi không lấy được danh sách đầy đủ
 MA_DU_PHONG = ["NTP", "PXL", "TV1", "DHA", "PCH", "VNM", "VCB",
                "CTF", "VC3", "VJC", "HPG", "FPT", "SSI", "VND", "MWG"]
+
+# Giới hạn tốc độ: tổng số lượt gọi tối đa mỗi phút (tất cả luồng cộng lại)
+RATE_PER_MIN = int(os.environ.get("RATE_PER_MIN", "55"))
+SO_LUONG = 6  # số luồng chạy song song
+KHOANG = 60.0 / RATE_PER_MIN
+_khoa = threading.Lock()
+_ke_tiep = [0.0]
+
+# Lịch các phiên giao dịch thật (lấy từ mã VCB), dùng để đếm số phiên
+LICH = []
+
+
+def cho_luot():
+    """Xếp hàng xin lượt gọi API, đảm bảo không vượt RATE_PER_MIN."""
+    with _khoa:
+        bay_gio = time.time()
+        t = max(bay_gio, _ke_tiep[0])
+        _ke_tiep[0] = t + KHOANG
+    cho = t - bay_gio
+    if cho > 0:
+        time.sleep(cho)
+
+
+def lay_lich():
+    """Lấy danh sách ngày giao dịch thật từ VCB (mã thanh khoản cao)."""
+    for lan in range(3):
+        try:
+            cho_luot()
+            start = (date.today() - timedelta(days=200)).strftime("%Y-%m-%d")
+            end = date.today().strftime("%Y-%m-%d")
+            df = Vnstock().stock(symbol="VCB", source="VCI").quote.history(
+                start=start, end=end, interval="1D")
+            ds = sorted(set(pd.to_datetime(df["time"]).dt.normalize()))
+            if len(ds) > 50:
+                print("Lich giao dich:", len(ds), "phien, phien cuoi",
+                      ds[-1].strftime("%d/%m/%Y"))
+                return ds
+        except Exception as e:
+            print("Khong lay duoc lich:", e)
+            time.sleep(5)
+    print("Khong co lich, se dem theo so nen")
+    return []
 
 
 def lay_danh_sach():
@@ -84,8 +129,14 @@ def tin_hieu(up, df):
     while i > 0 and up[i] == up[i - 1]:
         i -= 1  # lùi về phiên đầu tiên của trạng thái hiện tại
 
-    phien = n - 1 - i
-    ngay = pd.to_datetime(df["time"].iloc[i]).strftime("%d/%m/%Y")
+    ngay_ts = pd.to_datetime(df["time"].iloc[i]).normalize()
+    if LICH:
+        # Đếm số phiên giao dịch THẬT từ ngày báo đến phiên mới nhất
+        phien = len(LICH) - bisect.bisect_right(LICH, ngay_ts)
+    else:
+        phien = n - 1 - i  # dự phòng: đếm theo số nến
+
+    ngay = ngay_ts.strftime("%d/%m/%Y")
     bao = float(c.iloc[i])
 
     if up[-1]:
@@ -120,27 +171,39 @@ def phan_tich(ma):
             "ema": tin_hieu(up_ema, df)}
 
 
-MA_LIST = lay_danh_sach()
-ket_qua = []
-
-for stt, ma in enumerate(MA_LIST, 1):
-    r = None
+def xu_ly(ma):
+    """Phân tích 1 mã, thử lại 1 lần nếu lỗi."""
     for lan in range(2):
+        cho_luot()
         try:
-            r = phan_tich(ma)
-            break
+            return phan_tich(ma)
         except Exception as e:
             loi = str(e).lower()
             print("LOI", ma, e)
             if "limit" in loi or "429" in loi or "rate" in loi:
                 time.sleep(20)  # bị giới hạn, nghỉ rồi thử lại
             else:
-                break
-    if r:
-        ket_qua.append(r)
-    if stt % 100 == 0:
-        print("Da xu ly", stt, "/", len(MA_LIST), "ma, co", len(ket_qua), "ket qua")
-    time.sleep(1.1)  # giữ dưới 60 lượt/phút
+                return None
+    return None
+
+
+LICH = lay_lich()
+MA_LIST = lay_danh_sach()
+ket_qua = []
+bat_dau = time.time()
+
+with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
+    futures = [ex.submit(xu_ly, ma) for ma in MA_LIST]
+    for stt, f in enumerate(as_completed(futures), 1):
+        r = f.result()
+        if r:
+            ket_qua.append(r)
+        if stt % 100 == 0:
+            phut = (time.time() - bat_dau) / 60
+            print("Da xu ly", stt, "/", len(MA_LIST), "ma,",
+                  len(ket_qua), "ket qua,", round(phut, 1), "phut")
+
+ket_qua.sort(key=lambda x: x["ma"])
 
 if ket_qua:
     with open("data.json", "w", encoding="utf-8") as f:
