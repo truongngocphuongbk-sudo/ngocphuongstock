@@ -10,8 +10,9 @@
   .sub{color:#777;margin:2px 0 12px}
   input{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border:1px solid #ddd;border-radius:12px;margin-bottom:12px}
   .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-  .card{border-radius:12px;padding:8px;font-size:12px}
+  .card{border:2px solid transparent;border-radius:12px;padding:8px;font-size:12px;text-align:left;font-family:inherit;cursor:pointer}
   .card b{display:block;font-size:24px;margin-top:4px}
+  .card.on{border-color:#222}
   .buy{background:#e8ecfb;color:#2b44c8}
   .sell{background:#fbe8eb;color:#c8323f}
   .hold{background:#e8f5ea;color:#3a9a4a}
@@ -26,35 +27,42 @@
   .t-OUT{background:#fbf0e0;color:#c8812b}
   .up{color:#2b44c8}.down{color:#c8323f}
   small{color:#999;display:block}
-  .pager{text-align:center;margin-top:12px}
-  .pager button{width:36px;height:36px;margin:2px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:15px}
-  .pager button.on{background:#2e7d32;color:#fff;border-color:#2e7d32}
+  .pager{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px}
+  .pager button{padding:8px 14px;border:1px solid #ddd;border-radius:8px;background:#fff;font-size:15px}
+  .pager button:disabled{opacity:.4}
 </style>
 </head>
 <body>
 <h1>Bộ lọc cổ phiếu</h1>
-<div class="sub">Cập nhật lúc <b id="date" style="color:#2e7d32"></b></div>
+<div class="sub">Cập nhật lúc <b id="date" style="color:#2e7d32"></b> · <span id="tong"></span> mã</div>
 <input id="q" placeholder="Tìm mã cổ phiếu...">
 <div class="cards">
-  <div class="card buy">Tín hiệu BUY<b id="nBuy">0</b></div>
-  <div class="card sell">Tín hiệu SELL<b id="nSell">0</b></div>
-  <div class="card hold">Đang nắm giữ<b id="nHold">0</b></div>
-  <div class="card out">Đứng ngoài<b id="nOut">0</b></div>
+  <button class="card buy" id="cBUY" onclick="chon('MUA')">Tín hiệu BUY<b id="nBuy">0</b></button>
+  <button class="card sell" id="cSELL" onclick="chon('BAN')">Tín hiệu SELL<b id="nSell">0</b></button>
+  <button class="card hold" id="cHOLD" onclick="chon('GIU')">Đang nắm giữ<b id="nHold">0</b></button>
+  <button class="card out" id="cOUT" onclick="chon('OUT')">Đứng ngoài<b id="nOut">0</b></button>
 </div>
 <table>
   <thead><tr><th>MÃ</th><th>TÍN HIỆU</th><th>NGÀY BÁO</th><th>SỐ PHIÊN</th><th>% LÃI/LỖ</th><th>GIÁ</th></tr></thead>
   <tbody id="body"></tbody>
 </table>
-<div class="pager" id="pager"></div>
+<div class="pager">
+  <button id="bTruoc" onclick="doiTrang(page-1)">‹ Trước</button>
+  <span id="soTrang"></span>
+  <button id="bSau" onclick="doiTrang(page+1)">Sau ›</button>
+</div>
 
 <script>
 var DATA = [];
 var TEN = {MUA:"MUA", BAN:"BÁN", GIU:"Nắm giữ", OUT:"Đứng ngoài"};
-var PAGE_SIZE = 10, page = 1;
+var IDCARD = {MUA:"cBUY", BAN:"cSELL", GIU:"cHOLD", OUT:"cOUT"};
+var PAGE_SIZE = 20, page = 1, loai = "";
 
 function loc(){
   var k = document.getElementById("q").value.trim().toUpperCase();
-  return DATA.filter(function(d){ return d.ma.indexOf(k) !== -1; });
+  return DATA.filter(function(d){
+    return d.ma.indexOf(k) !== -1 && (!loai || d.tin === loai);
+  });
 }
 
 function dem(){
@@ -63,12 +71,24 @@ function dem(){
   document.getElementById("nSell").textContent = c("BAN");
   document.getElementById("nHold").textContent = c("GIU");
   document.getElementById("nOut").textContent  = c("OUT");
+  document.getElementById("tong").textContent  = DATA.length;
+}
+
+function chon(t){
+  loai = (loai === t) ? "" : t;
+  for (var k in IDCARD){
+    document.getElementById(IDCARD[k]).className =
+      document.getElementById(IDCARD[k]).className.replace(" on","") + (k === loai ? " on" : "");
+  }
+  page = 1;
+  ve();
 }
 
 function ve(){
   var ds = loc();
   var tongTrang = Math.max(1, Math.ceil(ds.length / PAGE_SIZE));
-  if (page > tongTrang) page = 1;
+  if (page > tongTrang) page = tongTrang;
+  if (page < 1) page = 1;
   var tu = (page - 1) * PAGE_SIZE;
   var html = "";
   ds.slice(tu, tu + PAGE_SIZE).forEach(function(d){
@@ -84,12 +104,9 @@ function ve(){
       "</tr>";
   });
   document.getElementById("body").innerHTML = html || "<tr><td colspan='6'>Không có kết quả</td></tr>";
-
-  var p = "";
-  for (var i = 1; i <= tongTrang; i++){
-    p += "<button class='" + (i === page ? "on" : "") + "' onclick='doiTrang(" + i + ")'>" + i + "</button>";
-  }
-  document.getElementById("pager").innerHTML = p;
+  document.getElementById("soTrang").textContent = "Trang " + page + " / " + tongTrang;
+  document.getElementById("bTruoc").disabled = page <= 1;
+  document.getElementById("bSau").disabled = page >= tongTrang;
 }
 
 function doiTrang(i){ page = i; ve(); }
