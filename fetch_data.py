@@ -22,6 +22,10 @@ except Exception as e:
 MA_DU_PHONG = ["NTP", "PXL", "TV1", "DHA", "PCH", "VNM", "VCB",
                "CTF", "VC3", "VJC", "HPG", "FPT", "SSI", "VND", "MWG"]
 
+# Điều kiện lọc bước 1: chỉ giữ mã đạt cả hai
+LOC_KL = 100000   # KL trung bình 20 phiên phải lớn hơn (cổ phiếu)
+LOC_GIA = 10.0    # giá phải lớn hơn (nghìn đồng: 10.0 = 10.000đ)
+
 # Giới hạn tốc độ: tổng số lượt gọi tối đa mỗi phút (tất cả luồng cộng lại)
 RATE_PER_MIN = int(os.environ.get("RATE_PER_MIN", "55"))
 SO_LUONG = 6  # số luồng chạy song song
@@ -165,8 +169,14 @@ def phan_tich(ma):
     up_ema = (e9 > e21).values
     up_st = supertrend_up(df, 10, 3.0)
 
+    # Khối lượng trung bình 20 phiên gần nhất (đơn vị: cổ phiếu)
+    kl20 = 0
+    if "volume" in df.columns:
+        kl20 = float(df["volume"].tail(20).mean())
+
     return {"ma": ma,
             "nay": round(float(c.iloc[-1]), 2),
+            "kl20": int(kl20),
             "st": tin_hieu(up_st, df),
             "ema": tin_hieu(up_ema, df)}
 
@@ -187,26 +197,74 @@ def xu_ly(ma):
     return None
 
 
+def dat(r):
+    """Mã có đạt điều kiện lọc bước 1 không."""
+    return r.get("kl20", 0) > LOC_KL and r["nay"] > LOC_GIA
+
+
+# ---- Đọc dữ liệu lần chạy trước ----
+CU = {}
+try:
+    with open("data.json", encoding="utf-8") as f:
+        for r in json.load(f):
+            CU[r["ma"]] = r
+except Exception as e:
+    print("Chua co data.json cu:", e)
+
+BQ = set()
+CO_BQ = os.path.exists("bo_qua.json")
+if CO_BQ:
+    try:
+        with open("bo_qua.json", encoding="utf-8") as f:
+            BQ = set(json.load(f))
+    except Exception as e:
+        print("Khong doc duoc bo_qua.json:", e)
+        CO_BQ = False
+
+# Tải đầy đủ: thứ Hai, hoặc chưa có bo_qua.json, hoặc đặt FULL=1
+TAI_DAY_DU = (os.environ.get("FULL") == "1"
+              or date.today().weekday() == 0
+              or not CO_BQ)
+
 LICH = lay_lich()
 MA_LIST = lay_danh_sach()
-ket_qua = []
+
+if TAI_DAY_DU:
+    MA_TAI = list(MA_LIST)
+    bq_moi = set()          # xây lại danh sách loại từ đầu
+else:
+    MA_TAI = [m for m in MA_LIST if m not in BQ]
+    bq_moi = set(m for m in BQ if m in set(MA_LIST))
+
+print("Tai", len(MA_TAI), "/", len(MA_LIST), "ma",
+      "(tai day du)" if TAI_DAY_DU else "(bo qua " + str(len(BQ)) + " ma da loai)")
+
+ket_qua = {}
 bat_dau = time.time()
 
 with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
-    futures = [ex.submit(xu_ly, ma) for ma in MA_LIST]
+    futures = {ex.submit(xu_ly, ma): ma for ma in MA_TAI}
     for stt, f in enumerate(as_completed(futures), 1):
+        ma = futures[f]
         r = f.result()
         if r:
-            ket_qua.append(r)
+            if dat(r):
+                ket_qua[ma] = r
+            else:
+                bq_moi.add(ma)
+        elif ma in CU and dat(CU[ma]):
+            ket_qua[ma] = CU[ma]  # lỗi tải: giữ tạm dữ liệu cũ
         if stt % 100 == 0:
             phut = (time.time() - bat_dau) / 60
-            print("Da xu ly", stt, "/", len(MA_LIST), "ma,",
-                  len(ket_qua), "ket qua,", round(phut, 1), "phut")
+            print("Da xu ly", stt, "/", len(MA_TAI), "ma,",
+                  len(ket_qua), "ma dat,", round(phut, 1), "phut")
 
-ket_qua.sort(key=lambda x: x["ma"])
+ds_ket_qua = sorted(ket_qua.values(), key=lambda x: x["ma"])
 
-if ket_qua:
+if ds_ket_qua:
     with open("data.json", "w", encoding="utf-8") as f:
-        json.dump(ket_qua, f, ensure_ascii=False)
+        json.dump(ds_ket_qua, f, ensure_ascii=False)
+    with open("bo_qua.json", "w", encoding="utf-8") as f:
+        json.dump(sorted(bq_moi), f)
 
-print("Xong:", len(ket_qua), "ma")
+print("Xong:", len(ds_ket_qua), "ma dat dieu kien,", len(bq_moi), "ma bi loai")
