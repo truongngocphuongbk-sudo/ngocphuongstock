@@ -1,0 +1,122 @@
+[
+ {
+  "ma": "MWG",
+  "tin": "BAN",
+  "ngay": "03/11/2026",
+  "phien": 0,
+  "bao": 72.2,
+  "nay": 72.2
+ },
+ {
+  "ma": "CTF",
+  "tin": "GIU",
+  "ngay": "02/11/2026",
+  "phien": 1,
+  "bao": 19.6,
+  "nay": 19.25
+ },
+ {
+  "ma": "TV1",
+  "tin": "GIU",
+  "ngay": "30/10/2026",
+  "phien": 2,
+  "bao": 19.8,
+  "nay": 19.2
+ },
+ {
+  "ma": "PXL",
+  "tin": "GIU",
+  "ngay": "29/10/2026",
+  "phien": 3,
+  "bao": 10.8,
+  "nay": 10.5
+ },
+ {
+  "ma": "VJC",
+  "tin": "GIU",
+  "ngay": "26/10/2026",
+  "phien": 6,
+  "bao": 132.0,
+  "nay": 131.8
+ },
+ {
+  "ma": "HPG",
+  "tin": "GIU",
+  "ngay": "21/10/2026",
+  "phien": 9,
+  "bao": 21.15,
+  "nay": 21.05
+ },
+ {
+  "ma": "NTP",
+  "tin": "GIU",
+  "ngay": "13/08/2026",
+  "phien": 55,
+  "bao": 51.8,
+  "nay": 55.3
+ },
+ {
+  "ma": "DHA",
+  "tin": "GIU",
+  "ngay": "31/07/2026",
+  "phien": 64,
+  "bao": 48.35,
+  "nay": 55.9
+ },
+ {
+  "ma": "PCH",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 18.2
+ },
+ {
+  "ma": "VNM",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 56.2
+ },
+ {
+  "ma": "VCB",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 53.2
+ },
+ {
+  "ma": "VC3",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 23.1
+ },
+ {
+  "ma": "FPT",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 50.5
+ },
+ {
+  "ma": "SSI",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 19.15
+ },
+ {
+  "ma": "VND",
+  "tin": "OUT",
+  "ngay": "-",
+  "phien": 0,
+  "bao": 0,
+  "nay": 13.25
+ }
+]
