@@ -9,6 +9,10 @@
   h1{margin:0;font-size:26px}
   .sub{color:#777;margin:2px 0 12px}
   input,select{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border:1px solid #ddd;border-radius:12px;margin-bottom:12px;background:#fff;font-family:inherit}
+  .thanhkhoan{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:4px}
+  .thanhkhoan label{font-size:12px;color:#555;display:block;margin-bottom:4px}
+  .thanhkhoan input{margin-bottom:0}
+  .ghichu{font-size:11px;color:#999;margin:4px 0 12px}
   .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
   .card{border:2px solid transparent;border-radius:12px;padding:8px;font-size:12px;text-align:left;font-family:inherit;cursor:pointer}
   .card b{display:block;font-size:24px;margin-top:4px}
@@ -39,6 +43,17 @@
   <option value="st">Bộ lọc 1: Supertrend (10, 3)</option>
   <option value="ema">Bộ lọc 2: Giao cắt EMA 9/21</option>
 </select>
+<div class="thanhkhoan">
+  <div>
+    <label for="inKL">KL TB 20 phiên từ (cp)</label>
+    <input id="inKL" type="number" inputmode="numeric" min="50000" step="10000" value="100000" onchange="doiLQ()">
+  </div>
+  <div>
+    <label for="inGia">Giá từ (đồng)</label>
+    <input id="inGia" type="number" inputmode="numeric" min="5000" step="1000" value="10000" onchange="doiLQ()">
+  </div>
+</div>
+<div class="ghichu">Thấp nhất: KL 50.000 · giá 5.000đ. Không giới hạn trên.</div>
 <input id="q" placeholder="Tìm mã cổ phiếu...">
 <div class="cards">
   <button class="card buy" id="cBUY" onclick="chon('MUA')">Tín hiệu BUY<b id="nBuy">0</b></button>
@@ -63,12 +78,25 @@ var IDCARD = {MUA:"cBUY", BAN:"cSELL", GIU:"cHOLD", OUT:"cOUT"};
 var THUTU = {MUA:0, BAN:1, GIU:2, OUT:3};
 var PAGE_SIZE = 20, page = 1, loai = "", CK = "st";
 
+// Mức thấp nhất cho phép và giá trị đang chọn
+var KL_SAN = 50000, GIA_SAN = 5000;      // sàn: không cho nhập thấp hơn
+var klMin = 100000, giaMin = 10000;      // giá trị đang lọc (giá tính bằng đồng)
+
 // Lấy tín hiệu của chiến lược đang chọn (có dự phòng cho dữ liệu kiểu cũ)
 function lay(d){ return d[CK] || d; }
 
+// Danh sách mã sau khi áp điều kiện khối lượng + giá
+// Dữ liệu giá tính theo nghìn đồng (30.40 = 30.400đ) nên nhân 1000
+function nguon(){
+  return DATA.filter(function(d){
+    if (d.kl20 === undefined) return true; // dữ liệu cũ chưa có khối lượng
+    return d.kl20 >= klMin && d.nay * 1000 >= giaMin;
+  });
+}
+
 function loc(){
   var k = document.getElementById("q").value.trim().toUpperCase();
-  var ds = DATA.filter(function(d){
+  var ds = nguon().filter(function(d){
     return d.ma.indexOf(k) !== -1 && (!loai || lay(d).tin === loai);
   });
   ds.sort(function(a, b){
@@ -79,12 +107,13 @@ function loc(){
 }
 
 function dem(){
-  function c(t){ return DATA.filter(function(d){ return lay(d).tin === t; }).length; }
+  var src = nguon();
+  function c(t){ return src.filter(function(d){ return lay(d).tin === t; }).length; }
   document.getElementById("nBuy").textContent  = c("MUA");
   document.getElementById("nSell").textContent = c("BAN");
   document.getElementById("nHold").textContent = c("GIU");
   document.getElementById("nOut").textContent  = c("OUT");
-  document.getElementById("tong").textContent  = DATA.length;
+  document.getElementById("tong").textContent  = src.length;
 }
 
 function danhDauThe(){
@@ -103,6 +132,21 @@ function chon(t){
 
 function doiCK(){
   CK = document.getElementById("ck").value;
+  page = 1;
+  dem();
+  ve();
+}
+
+// Đọc 2 ô nhập, nâng lên mức sàn nếu nhập thấp hơn
+function doiLQ(){
+  var a = parseFloat(document.getElementById("inKL").value);
+  var b = parseFloat(document.getElementById("inGia").value);
+  if (isNaN(a) || a < KL_SAN) a = KL_SAN;
+  if (isNaN(b) || b < GIA_SAN) b = GIA_SAN;
+  klMin = a;
+  giaMin = b;
+  document.getElementById("inKL").value = a;
+  document.getElementById("inGia").value = b;
   page = 1;
   dem();
   ve();
