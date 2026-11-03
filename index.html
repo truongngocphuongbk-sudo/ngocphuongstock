@@ -8,7 +8,7 @@
   body{font-family:-apple-system,Arial,sans-serif;background:#f3f4f9;margin:0;padding:16px;color:#222}
   h1{margin:0;font-size:26px}
   .sub{color:#777;margin:2px 0 12px}
-  input{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border:1px solid #ddd;border-radius:12px;margin-bottom:12px}
+  input,select{width:100%;box-sizing:border-box;padding:12px;font-size:16px;border:1px solid #ddd;border-radius:12px;margin-bottom:12px;background:#fff;font-family:inherit}
   .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
   .card{border:2px solid transparent;border-radius:12px;padding:8px;font-size:12px;text-align:left;font-family:inherit;cursor:pointer}
   .card b{display:block;font-size:24px;margin-top:4px}
@@ -35,6 +35,10 @@
 <body>
 <h1>Bộ lọc cổ phiếu</h1>
 <div class="sub">Cập nhật lúc <b id="date" style="color:#2e7d32"></b> · <span id="tong"></span> mã</div>
+<select id="ck" onchange="doiCK()">
+  <option value="st">Bộ lọc 1: Supertrend (10, 3)</option>
+  <option value="ema">Bộ lọc 2: Giao cắt EMA 9/21</option>
+</select>
 <input id="q" placeholder="Tìm mã cổ phiếu...">
 <div class="cards">
   <button class="card buy" id="cBUY" onclick="chon('MUA')">Tín hiệu BUY<b id="nBuy">0</b></button>
@@ -56,17 +60,26 @@
 var DATA = [];
 var TEN = {MUA:"MUA", BAN:"BÁN", GIU:"Nắm giữ", OUT:"Đứng ngoài"};
 var IDCARD = {MUA:"cBUY", BAN:"cSELL", GIU:"cHOLD", OUT:"cOUT"};
-var PAGE_SIZE = 20, page = 1, loai = "";
+var THUTU = {MUA:0, BAN:1, GIU:2, OUT:3};
+var PAGE_SIZE = 20, page = 1, loai = "", CK = "st";
+
+// Lấy tín hiệu của chiến lược đang chọn (có dự phòng cho dữ liệu kiểu cũ)
+function lay(d){ return d[CK] || d; }
 
 function loc(){
   var k = document.getElementById("q").value.trim().toUpperCase();
-  return DATA.filter(function(d){
-    return d.ma.indexOf(k) !== -1 && (!loai || d.tin === loai);
+  var ds = DATA.filter(function(d){
+    return d.ma.indexOf(k) !== -1 && (!loai || lay(d).tin === loai);
   });
+  ds.sort(function(a, b){
+    var x = lay(a), y = lay(b);
+    return (THUTU[x.tin] - THUTU[y.tin]) || (x.phien - y.phien);
+  });
+  return ds;
 }
 
 function dem(){
-  function c(t){ return DATA.filter(function(d){ return d.tin === t; }).length; }
+  function c(t){ return DATA.filter(function(d){ return lay(d).tin === t; }).length; }
   document.getElementById("nBuy").textContent  = c("MUA");
   document.getElementById("nSell").textContent = c("BAN");
   document.getElementById("nHold").textContent = c("GIU");
@@ -74,13 +87,24 @@ function dem(){
   document.getElementById("tong").textContent  = DATA.length;
 }
 
+function danhDauThe(){
+  for (var k in IDCARD){
+    var el = document.getElementById(IDCARD[k]);
+    el.className = el.className.replace(" on","") + (k === loai ? " on" : "");
+  }
+}
+
 function chon(t){
   loai = (loai === t) ? "" : t;
-  for (var k in IDCARD){
-    document.getElementById(IDCARD[k]).className =
-      document.getElementById(IDCARD[k]).className.replace(" on","") + (k === loai ? " on" : "");
-  }
+  danhDauThe();
   page = 1;
+  ve();
+}
+
+function doiCK(){
+  CK = document.getElementById("ck").value;
+  page = 1;
+  dem();
   ve();
 }
 
@@ -92,15 +116,16 @@ function ve(){
   var tu = (page - 1) * PAGE_SIZE;
   var html = "";
   ds.slice(tu, tu + PAGE_SIZE).forEach(function(d){
-    var lai = d.bao ? ((d.nay - d.bao) / d.bao * 100) : 0;
+    var s = lay(d);
+    var lai = s.bao ? ((d.nay - s.bao) / s.bao * 100) : 0;
     var cls = lai >= 0 ? "up" : "down";
     html += "<tr>" +
       "<td><b>" + d.ma + "</b></td>" +
-      "<td><span class='tag t-" + d.tin + "'>" + TEN[d.tin] + "</span></td>" +
-      "<td>" + d.ngay + "</td>" +
-      "<td>" + d.phien + " phiên</td>" +
+      "<td><span class='tag t-" + s.tin + "'>" + TEN[s.tin] + "</span></td>" +
+      "<td>" + s.ngay + "</td>" +
+      "<td>" + s.phien + " phiên</td>" +
       "<td class='" + cls + "'>" + (lai >= 0 ? "+" : "") + lai.toFixed(2) + "%</td>" +
-      "<td><b>" + d.nay.toFixed(2) + "</b>" + (d.bao ? "<small>" + d.bao.toFixed(2) + "</small>" : "") + "</td>" +
+      "<td><b>" + d.nay.toFixed(2) + "</b>" + (s.bao ? "<small>" + s.bao.toFixed(2) + "</small>" : "") + "</td>" +
       "</tr>";
   });
   document.getElementById("body").innerHTML = html || "<tr><td colspan='6'>Không có kết quả</td></tr>";
