@@ -15,6 +15,9 @@ try:
     import vnstock
     if os.environ.get("VNSTOCK_API_KEY"):
         vnstock.login(os.environ["VNSTOCK_API_KEY"])
+        print("Da dang nhap vnstock")
+    else:
+        print("CANH BAO: khong co VNSTOCK_API_KEY, se bi gioi han thap")
 except Exception as e:
     print("Khong dang nhap duoc:", e)
 
@@ -32,6 +35,10 @@ SO_LUONG = 6  # số luồng chạy song song
 KHOANG = 60.0 / RATE_PER_MIN
 _khoa = threading.Lock()
 _ke_tiep = [0.0]
+
+# Dừng êm sau số phút này (phải nhỏ hơn timeout-minutes trong update.yml)
+GIOI_HAN_PHUT = float(os.environ.get("GIOI_HAN_PHUT", "50"))
+HET_GIO = time.time() + GIOI_HAN_PHUT * 60
 
 # Lịch các phiên giao dịch thật (lấy từ mã VCB), dùng để đếm số phiên
 LICH = []
@@ -182,14 +189,19 @@ def phan_tich(ma):
 
 
 def xu_ly(ma):
-    """Phân tích 1 mã, thử lại 1 lần nếu lỗi."""
+    """Phân tích 1 mã, thử lại 1 lần nếu lỗi.
+    Trả về "HET" nếu đã hết giờ (chưa xử lý mã này)."""
     for lan in range(2):
+        if time.time() > HET_GIO:
+            return "HET"
         cho_luot()
+        if time.time() > HET_GIO:
+            return "HET"
         try:
             return phan_tich(ma)
         except Exception as e:
             loi = str(e).lower()
-            print("LOI", ma, e)
+            print("LOI", ma, str(e)[:150])
             if "limit" in loi or "429" in loi or "rate" in loi:
                 time.sleep(20)  # bị giới hạn, nghỉ rồi thử lại
             else:
@@ -240,6 +252,7 @@ print("Tai", len(MA_TAI), "/", len(MA_LIST), "ma",
       "(tai day du)" if TAI_DAY_DU else "(bo qua " + str(len(BQ)) + " ma da loai)")
 
 ket_qua = {}
+bo_lo = set()   # mã chưa kịp xử lý vì hết giờ
 bat_dau = time.time()
 
 with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
@@ -247,7 +260,11 @@ with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
     for stt, f in enumerate(as_completed(futures), 1):
         ma = futures[f]
         r = f.result()
-        if r:
+        if r == "HET":
+            bo_lo.add(ma)
+            if ma in CU and dat(CU[ma]):
+                ket_qua[ma] = CU[ma]  # chưa kịp tải: giữ dữ liệu cũ
+        elif r:
             if dat(r):
                 ket_qua[ma] = r
             else:
@@ -261,10 +278,15 @@ with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
 
 ds_ket_qua = sorted(ket_qua.values(), key=lambda x: x["ma"])
 
+# Mã chưa kịp xử lý thì giữ nguyên trạng thái "đã loại" của lần trước
+bq_luu = bq_moi | (BQ & bo_lo)
+
 if ds_ket_qua:
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(ds_ket_qua, f, ensure_ascii=False)
     with open("bo_qua.json", "w", encoding="utf-8") as f:
-        json.dump(sorted(bq_moi), f)
+        json.dump(sorted(bq_luu), f)
 
-print("Xong:", len(ds_ket_qua), "ma dat dieu kien,", len(bq_moi), "ma bi loai")
+if bo_lo:
+    print("HET GIO: con", len(bo_lo), "ma chua xu ly, se lam tiep o lan chay sau")
+print("Xong:", len(ds_ket_qua), "ma dat dieu kien,", len(bq_luu), "ma bi loai")
