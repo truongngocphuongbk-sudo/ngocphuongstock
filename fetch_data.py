@@ -1,6 +1,8 @@
 import bisect
 import json
 import os
+import re
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,29 +20,20 @@ try:
         print("Da dang nhap vnstock")
     else:
         print("CANH BAO: khong co VNSTOCK_API_KEY, se bi gioi han thap")
-except Exception as e:
+except BaseException as e:
     print("Khong dang nhap duoc:", e)
 
-# Danh sách dự phòng, chỉ dùng khi không lấy được danh sách đầy đủ
-MA_DU_PHONG = ["NTP", "PXL", "TV1", "DHA", "PCH", "VNM", "VCB",
-               "CTF", "VC3", "VJC", "HPG", "FPT", "SSI", "VND", "MWG"]
-
-# Điều kiện lọc bước 1: chỉ giữ mã đạt cả hai
-LOC_KL = 100000   # KL trung bình 20 phiên phải lớn hơn (cổ phiếu)
-LOC_GIA = 10.0    # giá phải lớn hơn (nghìn đồng: 10.0 = 10.000đ)
-
-# Giới hạn tốc độ: tổng số lượt gọi tối đa mỗi phút (tất cả luồng cộng lại)
-RATE_PER_MIN = int(os.environ.get("RATE_PER_MIN", "55"))
-SO_LUONG = 6  # số luồng chạy song song
+# Hạn mức vnstock bản Cộng đồng: 60 lượt/phút. Đặt thấp hơn để an toàn.
+RATE_PER_MIN = int(os.environ.get("RATE_PER_MIN", "45"))
+SO_LUONG = 6
 KHOANG = 60.0 / RATE_PER_MIN
 _khoa = threading.Lock()
 _ke_tiep = [0.0]
 
 # Dừng êm sau số phút này (phải nhỏ hơn timeout-minutes trong update.yml)
-GIOI_HAN_PHUT = float(os.environ.get("GIOI_HAN_PHUT", "50"))
+GIOI_HAN_PHUT = float(os.environ.get("GIOI_HAN_PHUT", "20"))
 HET_GIO = time.time() + GIOI_HAN_PHUT * 60
 
-# Lịch các phiên giao dịch thật (lấy từ mã VCB), dùng để đếm số phiên
 LICH = []
 
 
@@ -55,9 +48,41 @@ def cho_luot():
         time.sleep(cho)
 
 
+def nghi_chung(giay):
+    """Bắt TẤT CẢ các luồng cùng nghỉ (khi chạm hạn mức)."""
+    with _khoa:
+        _ke_tiep[0] = max(_ke_tiep[0], time.time() + giay)
+
+
+def doc_json(duong_dan, mac_dinh):
+    try:
+        with open(duong_dan, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return mac_dinh
+
+
+def doc_danh_sach():
+    """Đọc danh sách mã từ danh_sach.txt (cách nhau bằng dấu phẩy/khoảng trắng/xuống dòng)."""
+    try:
+        with open("danh_sach.txt", encoding="utf-8") as f:
+            noi_dung = f.read()
+    except Exception as e:
+        print("Khong doc duoc danh_sach.txt:", e)
+        return []
+    ds = []
+    for dong in noi_dung.splitlines():
+        dong = dong.split("#")[0]
+        for m in re.split(r"[\s,;]+", dong):
+            m = m.strip().upper()
+            if m and m.isalnum() and m not in ds:
+                ds.append(m)
+    return ds
+
+
 def lay_lich():
-    """Lấy danh sách ngày giao dịch thật từ VCB (mã thanh khoản cao)."""
-    for lan in range(3):
+    """Lấy danh sách ngày giao dịch thật từ VCB."""
+    for lan in range(4):
         try:
             cho_luot()
             start = (date.today() - timedelta(days=200)).strftime("%Y-%m-%d")
@@ -69,37 +94,11 @@ def lay_lich():
                 print("Lich giao dich:", len(ds), "phien, phien cuoi",
                       ds[-1].strftime("%d/%m/%Y"))
                 return ds
-        except Exception as e:
+        except (Exception, SystemExit) as e:
             print("Khong lay duoc lich:", e)
-            time.sleep(5)
+            nghi_chung(65)
     print("Khong co lich, se dem theo so nen")
     return []
-
-
-def lay_danh_sach():
-    try:
-        ls = Vnstock().stock(symbol="VCB", source="VCI").listing
-        df = None
-        for ten in ("symbols_by_exchange", "all_symbols"):
-            try:
-                df = getattr(ls, ten)()
-                if df is not None and len(df):
-                    break
-            except Exception as e:
-                print("Listing loi", ten, e)
-        if df is not None and len(df):
-            if "type" in df.columns:
-                df = df[df["type"].astype(str).str.upper() == "STOCK"]
-            cot = "symbol" if "symbol" in df.columns else df.columns[0]
-            ds = [str(s).upper() for s in df[cot].dropna()]
-            ds = sorted({s for s in ds if len(s) == 3 and s.isalnum()})
-            if len(ds) > 100:
-                print("Lay duoc", len(ds), "ma")
-                return ds
-    except Exception as e:
-        print("Khong lay duoc danh sach:", e)
-    print("Dung danh sach du phong")
-    return MA_DU_PHONG
 
 
 def supertrend_up(df, period=10, mult=3.0):
@@ -138,14 +137,13 @@ def tin_hieu(up, df):
     n = len(df)
     i = n - 1
     while i > 0 and up[i] == up[i - 1]:
-        i -= 1  # lùi về phiên đầu tiên của trạng thái hiện tại
+        i -= 1
 
     ngay_ts = pd.to_datetime(df["time"].iloc[i]).normalize()
     if LICH:
-        # Đếm số phiên giao dịch THẬT từ ngày báo đến phiên mới nhất
         phien = len(LICH) - bisect.bisect_right(LICH, ngay_ts)
     else:
-        phien = n - 1 - i  # dự phòng: đếm theo số nến
+        phien = n - 1 - i
 
     ngay = ngay_ts.strftime("%d/%m/%Y")
     bao = float(c.iloc[i])
@@ -176,22 +174,26 @@ def phan_tich(ma):
     up_ema = (e9 > e21).values
     up_st = supertrend_up(df, 10, 3.0)
 
-    # Khối lượng trung bình 20 phiên gần nhất (đơn vị: cổ phiếu)
     kl20 = 0
     if "volume" in df.columns:
         kl20 = float(df["volume"].tail(20).mean())
+
+    h = [[pd.to_datetime(t).strftime("%Y-%m-%d"), round(float(o), 2),
+          round(float(hh), 2), round(float(ll), 2), round(float(cc), 2), int(v)]
+         for t, o, hh, ll, cc, v in
+         df[["time", "open", "high", "low", "close", "volume"]].tail(120).itertuples(index=False)]
 
     return {"ma": ma,
             "nay": round(float(c.iloc[-1]), 2),
             "kl20": int(kl20),
             "st": tin_hieu(up_st, df),
-            "ema": tin_hieu(up_ema, df)}
+            "ema": tin_hieu(up_ema, df),
+            "h": h}
 
 
 def xu_ly(ma):
-    """Phân tích 1 mã, thử lại 1 lần nếu lỗi.
-    Trả về "HET" nếu đã hết giờ (chưa xử lý mã này)."""
-    for lan in range(2):
+    """Phân tích 1 mã. Trả về: dict | None (quá ít dữ liệu) | "LOI" | "HET"."""
+    for lan in range(3):
         if time.time() > HET_GIO:
             return "HET"
         cho_luot()
@@ -199,94 +201,80 @@ def xu_ly(ma):
             return "HET"
         try:
             return phan_tich(ma)
+        except SystemExit:
+            print("CHAM HAN MUC, nghi 65s (", ma, ")")
+            nghi_chung(65)
         except Exception as e:
             loi = str(e).lower()
-            print("LOI", ma, str(e)[:150])
+            print("LOI", ma, str(e)[:120])
             if "limit" in loi or "429" in loi or "rate" in loi:
-                time.sleep(20)  # bị giới hạn, nghỉ rồi thử lại
+                nghi_chung(30)
             else:
-                return None
-    return None
+                return "LOI"
+    return "LOI"
 
 
-def dat(r):
-    """Mã có đạt điều kiện lọc bước 1 không."""
-    return r.get("kl20", 0) > LOC_KL and r["nay"] > LOC_GIA
+def main():
+    global LICH
+    DS = doc_danh_sach()
+    if not DS:
+        print("danh_sach.txt trong hoac khong co. Khong thay doi du lieu.")
+        return
+    print("Danh sach theo doi:", len(DS), "ma")
 
+    CU = {r["ma"]: r for r in doc_json("data.json", [])}
+    HIST = doc_json("hist.json", {})
+    LICH = lay_lich()
 
-# ---- Đọc dữ liệu lần chạy trước ----
-CU = {}
-try:
-    with open("data.json", encoding="utf-8") as f:
-        for r in json.load(f):
-            CU[r["ma"]] = r
-except Exception as e:
-    print("Chua co data.json cu:", e)
+    # Chỉ giữ các mã trong danh sách (mã cũ ngoài danh sách bị bỏ)
+    ket_qua = {m: CU[m] for m in DS if m in CU}
 
-BQ = set()
-CO_BQ = os.path.exists("bo_qua.json")
-if CO_BQ:
+    def luu():
+        ds = sorted(ket_qua.values(), key=lambda x: x["ma"])
+        if ds:
+            with open("data.json", "w", encoding="utf-8") as f:
+                json.dump(ds, f, ensure_ascii=False)
+        with open("hist.json", "w", encoding="utf-8") as f:
+            json.dump({m: HIST[m] for m in HIST if m in ket_qua}, f,
+                      separators=(",", ":"))
+
+    loi_ds = []
     try:
-        with open("bo_qua.json", encoding="utf-8") as f:
-            BQ = set(json.load(f))
-    except Exception as e:
-        print("Khong doc duoc bo_qua.json:", e)
-        CO_BQ = False
+        with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
+            futures = {ex.submit(xu_ly, ma): ma for ma in DS}
+            for stt, f in enumerate(as_completed(futures), 1):
+                ma = futures[f]
+                try:
+                    r = f.result()
+                except BaseException as e:
+                    print("LOI luong", ma, repr(e))
+                    r = "LOI"
 
-# Tải đầy đủ: thứ Hai, hoặc chưa có bo_qua.json, hoặc đặt FULL=1
-TAI_DAY_DU = (os.environ.get("FULL") == "1"
-              or date.today().weekday() == 0
-              or not CO_BQ)
+                if r == "HET" or r == "LOI":
+                    loi_ds.append(ma)         # giữ dữ liệu cũ (nếu có)
+                elif r is None:
+                    print("Qua it du lieu, bo qua:", ma)
+                    ket_qua.pop(ma, None)
+                    HIST.pop(ma, None)
+                else:
+                    h = r.pop("h", None)
+                    ket_qua[ma] = r
+                    if h:
+                        HIST[ma] = h
+                if stt % 25 == 0:
+                    luu()
+                    print("Da xu ly", stt, "/", len(DS), "ma")
+    finally:
+        luu()
 
-LICH = lay_lich()
-MA_LIST = lay_danh_sach()
+    if loi_ds:
+        print("CHUA LAY DUOC", len(loi_ds), "ma:", ", ".join(sorted(loi_ds)))
+        print("Kiem tra lai ma co dung khong, hoac chay workflow them 1 lan.")
+    print("Xong:", len(ket_qua), "/", len(DS), "ma")
 
-if TAI_DAY_DU:
-    MA_TAI = list(MA_LIST)
-    bq_moi = set()          # xây lại danh sách loại từ đầu
-else:
-    MA_TAI = [m for m in MA_LIST if m not in BQ]
-    bq_moi = set(m for m in BQ if m in set(MA_LIST))
 
-print("Tai", len(MA_TAI), "/", len(MA_LIST), "ma",
-      "(tai day du)" if TAI_DAY_DU else "(bo qua " + str(len(BQ)) + " ma da loai)")
-
-ket_qua = {}
-bo_lo = set()   # mã chưa kịp xử lý vì hết giờ
-bat_dau = time.time()
-
-with ThreadPoolExecutor(max_workers=SO_LUONG) as ex:
-    futures = {ex.submit(xu_ly, ma): ma for ma in MA_TAI}
-    for stt, f in enumerate(as_completed(futures), 1):
-        ma = futures[f]
-        r = f.result()
-        if r == "HET":
-            bo_lo.add(ma)
-            if ma in CU and dat(CU[ma]):
-                ket_qua[ma] = CU[ma]  # chưa kịp tải: giữ dữ liệu cũ
-        elif r:
-            if dat(r):
-                ket_qua[ma] = r
-            else:
-                bq_moi.add(ma)
-        elif ma in CU and dat(CU[ma]):
-            ket_qua[ma] = CU[ma]  # lỗi tải: giữ tạm dữ liệu cũ
-        if stt % 100 == 0:
-            phut = (time.time() - bat_dau) / 60
-            print("Da xu ly", stt, "/", len(MA_TAI), "ma,",
-                  len(ket_qua), "ma dat,", round(phut, 1), "phut")
-
-ds_ket_qua = sorted(ket_qua.values(), key=lambda x: x["ma"])
-
-# Mã chưa kịp xử lý thì giữ nguyên trạng thái "đã loại" của lần trước
-bq_luu = bq_moi | (BQ & bo_lo)
-
-if ds_ket_qua:
-    with open("data.json", "w", encoding="utf-8") as f:
-        json.dump(ds_ket_qua, f, ensure_ascii=False)
-    with open("bo_qua.json", "w", encoding="utf-8") as f:
-        json.dump(sorted(bq_luu), f)
-
-if bo_lo:
-    print("HET GIO: con", len(bo_lo), "ma chua xu ly, se lam tiep o lan chay sau")
-print("Xong:", len(ds_ket_qua), "ma dat dieu kien,", len(bq_luu), "ma bi loai")
+try:
+    main()
+except BaseException as e:
+    print("LOI NGHIEM TRONG:", repr(e))
+sys.exit(0)
